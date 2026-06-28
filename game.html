@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zen Demolition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a24; cursor: crosshair; }
+        canvas { display: block; }
+        #ui {
+            position: absolute; top: 20px; left: 20px; color: #e0e0e0;
+            font-family: system-ui, sans-serif; font-size: 14px; 
+            background: rgba(0,0,0,0.5); padding: 10px 15px; border-radius: 8px;
+            pointer-events: none; user-select: none;
+        }
+        #ui h2 { margin: 0 0 5px 0; font-size: 16px; color: #fff; }
+        #ui p { margin: 0; opacity: 0.8; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="ui">
+        <h2>Zen Demolition</h2>
+        <p>Click blocks to shatter them. Press <b>R</b> to rebuild.</p>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Core Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a24);
+        scene.fog = new THREE.Fog(0x1a1a24, 15, 35);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 5, 12);
+        camera.lookAt(0, 2, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        // --- Materials & Geometry ---
+        const blockGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+        const particleGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        
+        // Pastel/Vibrant palette for visual satisfaction
+        const colors = [0xff6b6b,0x4ecdc4,0xffe66d,0x95e1d3,0xf38181,0xaa96da,0xfcbad3,0xa8d8ea];
+        const materials = colors.map(c => new THREE.MeshStandardMaterial({ 
+            color: c, roughness: 0.4, metalness: 0.1 
+        }));
+
+        // --- State ---
+        let blocks = [];
+        let particles = [];
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const gravity = -15;
+        const floorY = -0.5;
+
+        // --- Tower Generation ---
+        function buildTower() {
+            clearScene();
+            const size = 4; // 4x4x4 grid
+            for (let x = 0; x < size; x++) {
+                for (let y = 0; y < size; y++) {
+                    for (let z = 0; z < size; z++) {
+                        const mat = materials[Math.floor(Math.random() * materials.length)];
+                        const mesh = new THREE.Mesh(blockGeo, mat);
+                        mesh.position.set(
+                            (x - size / 2 + 0.5) * 1,
+                            y * 1 + 0.5,
+                            (z - size / 2 + 0.5) * 1
+                        );
+                        scene.add(mesh);
+                        blocks.push(mesh);
+                    }
+                }
+            }
+        }
+
+        function clearScene() {
+            blocks.forEach(b => scene.remove(b));
+            particles.forEach(p => scene.remove(p.mesh));
+            blocks = [];
+            particles = [];
+        }
+
+        // --- Interaction ---
+        function onPointerDown(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(blocks);
+
+            if (intersects.length > 0) {
+                const hitBlock = intersects[0].object;
+                shatterBlock(hitBlock);
+            }
+        }
+
+        function shatterBlock(block) {
+            const pos = block.position.clone();
+            const mat = block.material;
+            scene.remove(block);
+            blocks = blocks.filter(b => b !== block);
+
+            // Spawn 8 smaller fragments
+            for (let i = 0; i < 8; i++) {
+                const particle = new THREE.Mesh(particleGeo, mat);
+                particle.position.copy(pos);
+                
+                // Random outward velocity
+                const velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 8,
+                    Math.random() * 6 + 2, // Upward bias
+                    (Math.random() - 0.5) * 8
+                );
+                
+                const rotationSpeed = new THREE.Vector3(
+                    Math.random() * 5, Math.random() * 5, Math.random() * 5
+                );
+
+                scene.add(particle);
+                particles.push({ mesh: particle, velocity, rotationSpeed, life: 4.0 });
+            }
+
+            // Auto-rebuild if empty
+            if (blocks.length === 0) {
+                setTimeout(buildTower, 1000);
+            }
+        }
+
+        window.addEventListener('pointerdown', onPointerDown);
+        window.addEventListener('keydown', (e) => { if(e.key === 'r' || e.key === 'R') buildTower(); });
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = Math.min(clock.getDelta(), 0.1); // Cap delta to prevent physics explosions on tab switch
+
+            // Update particles (Simple Euler integration)
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.velocity.y += gravity * dt;
+                p.mesh.position.addScaledVector(p.velocity, dt);
+                p.mesh.rotation.x += p.rotationSpeed.x * dt;
+                p.mesh.rotation.y += p.rotationSpeed.y * dt;
+
+                // Floor collision with bounce
+                if (p.mesh.position.y < floorY) {
+                    p.mesh.position.y = floorY;
+                    p.velocity.y *= -0.4; // Dampen bounce
+                    p.velocity.x *= 0.8;  // Friction
+                    p.velocity.z *= 0.8;
+                }
+
+                p.life -= dt;
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    particles.splice(i, 1);
+                }
+            }
+
+            // Gentle camera sway for flow state
+            const time = clock.getElapsedTime();
+            camera.position.x = Math.sin(time * 0.1) * 0.5;
+            camera.lookAt(0, 2, 0);
+
+            renderer.render(scene, camera);
+        }
+
+        buildTower();
+        animate();
+    </script>
+</body>
+</html>
